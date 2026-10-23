@@ -18,8 +18,8 @@ def count_unique_authors(path=f"data/{STORES_PATH[0]}/books.yaml"):
 
   return author_sets.nunique()
 
-def find_bestseller_author(path=f"data/{STORES_PATH[0]}"):
-  orders_df = clean_quantity_orders(path=f"{path}/orders.parquet")
+def find_bestseller_author(dir_path=f"data/{STORES_PATH[0]}"):
+  orders_df = clean_quantity_orders(path=f"{dir_path}/orders.parquet")
 
   book_sales = (
     orders_df
@@ -27,7 +27,7 @@ def find_bestseller_author(path=f"data/{STORES_PATH[0]}"):
     .sum()
   )
 
-  books = get_books_yaml_df(path=f"{path}/books.yaml")
+  books = get_books_yaml_df(path=f"{dir_path}/books.yaml")
 
   merged_df = pd.merge(
     book_sales,

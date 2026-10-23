@@ -4,7 +4,7 @@ from constants import STORES_PATH
 from networkx.utils.union_find import UnionFind
 
 
-def count_unique_users(path=f"data/{STORES_PATH[0]}/users.csv"):
+def find_unique_users(path=f"data/{STORES_PATH[0]}/users.csv"):
     users = pd.read_csv(path)
     columns = ["name", "address", "phone", "email"]
 
@@ -28,9 +28,4 @@ def count_unique_users(path=f"data/{STORES_PATH[0]}/users.csv"):
 
     users["real_user_id"] = [uf[i] for i in range(len(users))]
 
-    unique_users = users["real_user_id"].nunique()
-
-    print(f"Total user records: {len(users)}")
-    print(f"Unique real users: {unique_users}")
-
-    return unique_users, users[["id", "real_user_id"]]
+    return users

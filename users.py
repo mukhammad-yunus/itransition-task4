@@ -1,99 +1,113 @@
 import pandas as pd
 from itertools import combinations
-from constants import STORES_PATH
+from pathlib import Path
+
+from constants import DATA_DIR, STORES_PATH
 from orders import normalize_unit_price_orders
 from networkx.utils.union_find import UnionFind
 
 
-def find_unique_users(path=f"data/{STORES_PATH[0]}/users.csv"):
-    users = pd.read_csv(path)
-    columns = ["name", "address", "phone", "email"]
+IDENTITY_FIELDS = ["name", "address", "phone", "email"]
+
+
+def _default_users_path():
+    return DATA_DIR / STORES_PATH[0] / "users.csv"
+
+
+def _canonical(value):
+    if pd.isna(value):
+        return None
+    return " ".join(str(value).split()).casefold()
+
+
+def find_unique_users(path=None):
+    users = pd.read_csv(path or _default_users_path()).copy()
 
     uf = UnionFind(range(len(users)))
     found = {}
 
     for i, row in users.iterrows():
-        for fields in combinations(columns, 3):
-            values = tuple(row[field] for field in fields)
+        values = {
+            field: _canonical(row[field])
+            for field in IDENTITY_FIELDS
+        }
+
+        for fields in combinations(IDENTITY_FIELDS, 3):
+            signature = tuple(values[field] for field in fields)
 
             # Do not match records using missing values.
-            if any(pd.isna(value) for value in values):
+            if None in signature:
                 continue
 
-            match = (fields, values)
+            match = (fields, signature)
 
             if match in found:
                 uf.union(i, found[match])
             else:
                 found[match] = i
 
-    users["real_user_id"] = [uf[i] for i in range(len(users))]
+    users["real_user_id"] = [
+        uf[i] for i in range(len(users))
+    ]
 
     return users
 
-def find_most_spent_customer(dir_path=f"data/{STORES_PATH[0]}"):
-    users = find_unique_users(f"{dir_path}/users.csv")
+
+def find_most_spent_customer(dir_path=None):
+    directory = Path(dir_path or DATA_DIR / STORES_PATH[0])
+
+    users = find_unique_users(directory / "users.csv")
 
     orders_df = normalize_unit_price_orders(
-        path=f"{dir_path}/orders.parquet"
-    )
+        path=directory / "orders.parquet"
+    ).copy()
 
     orders_df["paid_price"] = (
         orders_df["quantity"] * orders_df["unit_price_usd"]
     )
 
-    user_purchase = (
-        orders_df
-        .groupby("user_id", as_index=False)["paid_price"]
-        .sum()
-    )
+    orders_df = orders_df.dropna(subset=["paid_price"])
 
-    user_purchase = user_purchase.merge(
+    purchases = orders_df.merge(
         users[["id", "real_user_id"]],
         how="left",
         left_on="user_id",
         right_on="id",
-        validate="many_to_one"
+        validate="many_to_one",
     )
 
-    if user_purchase["real_user_id"].isna().any():
+    if purchases["real_user_id"].isna().any():
         raise ValueError(
-            f"Some orders in {dir_path} reference unknown user IDs."
+            f"Some orders in {directory} reference unknown user IDs."
         )
 
-    customer_purchase = (
-        user_purchase
-        .groupby("real_user_id", as_index=False)["paid_price"]
-        .sum()
-    )
+    totals = purchases.groupby(
+        "real_user_id",
+        as_index=False,
+    )["paid_price"].sum()
 
-    if customer_purchase.empty:
+    if totals.empty:
         return pd.DataFrame(
             columns=["real_user_id", "paid_price", "user_ids"]
         )
 
-    max_purchase = customer_purchase["paid_price"].max()
+    top = totals[
+        totals["paid_price"].eq(totals["paid_price"].max())
+    ].copy()
 
-    best_customers = customer_purchase[
-        customer_purchase["paid_price"] == max_purchase
-    ]
-
-    best_customer_ids = (
-        users[
-            users["real_user_id"].isin(
-                best_customers["real_user_id"]
-            )
-        ]
-        .groupby("real_user_id")["id"]
-        .apply(list)
+    user_ids = (
+        users.groupby("real_user_id")["id"]
+        .apply(lambda values: sorted(values.tolist()))
         .rename("user_ids")
     )
 
-    result = best_customers.merge(
-        best_customer_ids,
+    result = top.merge(
+        user_ids,
         on="real_user_id",
         how="left",
-        validate="one_to_one"
+        validate="one_to_one",
     )
 
-    return result
+    result["paid_price"] = result["paid_price"].round(2)
+
+    return result.reset_index(drop=True)

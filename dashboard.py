@@ -1,8 +1,13 @@
 import streamlit as st
+from google import genai
 
 from app import create_daily_revenue_figure, get_store_statistics
 from constants import STORES_PATH
+from chat import ask_gemini
 
+client = genai.Client(
+    api_key=st.secrets["GEMINI_API_KEY"]
+)
 
 st.set_page_config(page_title="Bookstore Dashboard", layout="wide")
 
@@ -17,7 +22,7 @@ st.caption("Revenue, customer, and book statistics are calculated independently 
 store = st.selectbox("Select a store", STORES_PATH)
 statistics = load_statistics(store)
 
-revenue_tab, customers_tab, books_tab = st.tabs(["Revenue", "Customers", "Books"])
+revenue_tab, customers_tab, books_tab, ai_chat = st.tabs(["Revenue", "Customers", "Books", "AI chat"])
 
 with revenue_tab:
     st.subheader("Revenue analysis")
@@ -50,3 +55,25 @@ with books_tab:
     st.subheader("Most popular author set(s)")
     popular = statistics["popular_author_sets"][["authors", "books_sold"]].rename(columns={"authors": "Author set", "books_sold": "Books sold"})
     st.dataframe(popular, hide_index=True, width="stretch")
+
+with ai_chat:
+    st.subheader("Ask your data")
+
+    question = st.text_input(
+        "Ask a question about the selected store"
+    )
+
+    if st.button("Ask AI") and question.strip():
+        with st.spinner("Analyzing your question..."):
+            try:
+                answer = ask_gemini(
+                    client=client,
+                    question=question,
+                    store_name=store,
+                    statistics=statistics,
+                )
+
+                st.markdown(answer)
+
+            except Exception as exc:
+                st.error(f"Could not get an AI response: {exc}")

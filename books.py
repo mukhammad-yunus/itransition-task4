@@ -1,55 +1,55 @@
+from pathlib import Path
+
 import pandas as pd
 import yaml
-from constants import STORES_PATH
+
+from constants import DATA_DIR, STORES_PATH
 from orders import clean_quantity_orders
 
 
-def get_books_yaml_df(path=f"data/{STORES_PATH[0]}/books.yaml"):
-  with open(path, "r") as file:
-    data = yaml.safe_load(file)
-  return pd.DataFrame(data)
+def _default_books_path():
+    return DATA_DIR / STORES_PATH[0] / "books.yaml"
 
-def count_unique_authors(path=f"data/{STORES_PATH[0]}/books.yaml"):
-  books_df = get_books_yaml_df(path=path)
 
-  author_sets = books_df[":author"].apply(
-    lambda authors: frozenset(authors.split(", "))
-  )
+def get_books_yaml_df(path=None):
+    with open(path or _default_books_path(), encoding="utf-8") as file:
+        data = yaml.safe_load(file) or []
+    return pd.DataFrame(data)
 
-  return author_sets.nunique()
 
-def find_bestseller_author(dir_path=f"data/{STORES_PATH[0]}"):
-  orders_df = clean_quantity_orders(path=f"{dir_path}/orders.parquet")
+def author_set_key(authors):
+    if pd.isna(authors):
+        return None
+    names = [" ".join(name.split()) for name in str(authors).split(",") if name.strip()]
+    return tuple(sorted({name.casefold() for name in names})) or None
 
-  book_sales = (
-    orders_df
-    .groupby("book_id", as_index=False)["quantity"]
-    .sum()
-  )
 
-  books = get_books_yaml_df(path=f"{dir_path}/books.yaml")
+def author_set_label(authors):
+    if pd.isna(authors):
+        return None
+    names = [" ".join(name.split()) for name in str(authors).split(",") if name.strip()]
+    return " & ".join(sorted(set(names), key=str.casefold)) or None
 
-  merged_df = pd.merge(
-    book_sales,
-    books,
-    how="left",
-    left_on="book_id",
-    right_on=":id"
-  )
 
-  merged_df["author_set"] = merged_df[":author"].apply(
-    lambda x: frozenset(str(x).split(", "))
-  )
+def count_unique_authors(path=None):
+    books = get_books_yaml_df(path)
+    return int(books[":author"].map(author_set_key).dropna().nunique())
 
-  author_sales = (
-    merged_df
-    .groupby("author_set", as_index=False)["quantity"]
-    .sum()
-  )
 
-  max_sales = author_sales["quantity"].max()
+def find_bestseller_author(dir_path=None):
+    directory = Path(dir_path or (DATA_DIR / STORES_PATH[0]))
+    orders = clean_quantity_orders(directory / "orders.parquet")
+    books = get_books_yaml_df(directory / "books.yaml")
+    sales = orders.groupby("book_id", as_index=False)["quantity"].sum()
+    merged = sales.merge(books[[":id", ":author"]], how="left", left_on="book_id", right_on=":id")
+    merged["author_set"] = merged[":author"].map(author_set_key)
+    merged = merged.dropna(subset=["author_set"])
+    if merged.empty:
+        return pd.DataFrame(columns=["author_set", "authors", "books_sold"])
 
-  return author_sales.loc[
-    author_sales["quantity"] == max_sales,
-    ["author_set", "quantity"]
-  ]
+    author_sales = merged.groupby("author_set", as_index=False)["quantity"].sum()
+    labels = merged.drop_duplicates("author_set").set_index("author_set")[":author"].map(author_set_label)
+    author_sales["authors"] = author_sales["author_set"].map(labels)
+    author_sales = author_sales.rename(columns={"quantity": "books_sold"})
+    maximum = author_sales["books_sold"].max()
+    return author_sales.loc[author_sales["books_sold"].eq(maximum), ["author_set", "authors", "books_sold"]].sort_values("authors", kind="stable").reset_index(drop=True)
